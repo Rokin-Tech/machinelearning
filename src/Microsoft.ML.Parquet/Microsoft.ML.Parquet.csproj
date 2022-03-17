@@ -1,10 +1,11 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
-  <Import Project="$(RepoRoot)eng/pkg/Pack.props" />
-
-  <PropertyGroup>
+   <PropertyGroup>
     <TargetFramework>net6.0</TargetFramework>
     <IncludeInPackage>Microsoft.ML.Parquet</IncludeInPackage>
     <PackageDescription>ML.NET components for Apache Parquet support.</PackageDescription>
+    <SignAssembly>True</SignAssembly>
+    <DelaySign>True</DelaySign>
+    <AssemblyOriginatorKeyFile>public.snk</AssemblyOriginatorKeyFile>
   </PropertyGroup>
 
   <ItemGroup>

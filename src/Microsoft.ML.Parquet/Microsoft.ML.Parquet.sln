@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.2.32314.265
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Microsoft.ML.Parquet", "Microsoft.ML.Parquet.csproj", "{7EDDB546-5392-43FD-AF2B-96EE70FB427F}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7EDDB546-5392-43FD-AF2B-96EE70FB427F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7EDDB546-5392-43FD-AF2B-96EE70FB427F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7EDDB546-5392-43FD-AF2B-96EE70FB427F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7EDDB546-5392-43FD-AF2B-96EE70FB427F}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {098BC4E9-273D-4CFC-9120-763844F30F3F}
+	EndGlobalSection
+EndGlobal
