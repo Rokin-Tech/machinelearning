@@ -1,7 +1,0 @@
-#@ TextLoader{
-#@   header+
-#@   sep=tab
-#@   col=Foo:I4:0
-#@   col=Bar:U2:1
-#@ }
-Foo	Bar

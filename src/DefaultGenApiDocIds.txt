@@ -1,3 +1,0 @@
-// These attributes should be excluded from reference assemblies.
-
-T:Microsoft.ML.BestFriendAttribute
