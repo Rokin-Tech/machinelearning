@@ -19,6 +19,7 @@ using Parquet;
 using Parquet.Data;
 using Parquet.File.Values.Primitives;
 
+
 [assembly: LoadableClass(ParquetLoader.Summary, typeof(ParquetLoader), typeof(ParquetLoader.Arguments), typeof(SignatureDataLoader),
     ParquetLoader.LoaderName, ParquetLoader.LoaderSignature, ParquetLoader.ShortName)]
 
@@ -33,6 +34,12 @@ namespace Microsoft.ML.Data
     [BestFriend]
     internal sealed class ParquetLoader : ILegacyDataLoader, IDisposable
     {
+        private sealed class ReaderOptions
+        {
+            public long Count;
+            public long Offset;
+            public string[] Columns;
+        }
         /// <summary>
         /// A Column is a singular representation that consolidates all the related column chunks in the
         /// Parquet file. Information stored within the Column includes its name, raw type read from Parquet,
@@ -145,22 +152,24 @@ namespace Microsoft.ML.Data
                 _parquetStream = stream;
                 _parquetOptions = new ParquetOptions()
                 {
-                    TreatByteArrayAsString = true,
+                    TreatByteArrayAsString = false,
                     TreatBigIntegersAsDates = args.TreatBigIntegersAsDates
                 };
 
-                DataSet schemaDataSet;
+                DataField[] schemaDataSet = null;
 
                 try
                 {
                     // We only care about the schema so ignore the rows.
-                    ReaderOptions readerOptions = new ReaderOptions()
+                    var pr = new Parquet.ParquetReader(stream, _parquetOptions);
+                    schemaDataSet = pr.Schema.GetDataFields();
+                    for (int rg = 0; rg < pr.RowGroupCount; rg++)
                     {
-                        Count = 0,
-                        Offset = 0
-                    };
-                    schemaDataSet = ParquetReader.Read(stream, _parquetOptions, readerOptions);
-                    _rowCount = schemaDataSet.TotalRowCount;
+                        if (rg == 0) _rowCount = new long();
+                        var groupReader = pr.OpenRowGroupReader(rg);
+                        _rowCount += groupReader.RowCount;
+                    }
+
                 }
                 catch (Exception ex)
                 {
@@ -209,18 +218,21 @@ namespace Microsoft.ML.Data
                 };
 
                 _parquetStream = OpenStream(files);
-                DataSet schemaDataSet;
+                DataField[] schemaDataSet;
 
                 try
                 {
                     // We only care about the schema so ignore the rows.
-                    ReaderOptions readerOptions = new ReaderOptions()
+
+                    var pr = new Parquet.ParquetReader(_parquetStream, _parquetOptions);
+                    schemaDataSet = pr.Schema.GetDataFields();
+                    for (int rg = 0; rg < pr.RowGroupCount; rg++)
                     {
-                        Count = 0,
-                        Offset = 0
-                    };
-                    schemaDataSet = ParquetReader.Read(_parquetStream, _parquetOptions, readerOptions);
-                    _rowCount = schemaDataSet.TotalRowCount;
+                        if (rg == 0) _rowCount = new long();
+                        var groupReader = pr.OpenRowGroupReader(rg);
+                        _rowCount += groupReader.RowCount;
+                    }
+
                 }
                 catch (Exception ex)
                 {
@@ -256,11 +268,11 @@ namespace Microsoft.ML.Data
         /// </summary>
         /// <param name="dataSet">The schema data set.</param>
         /// <returns>The array of flattened columns instantiated from the parquet file.</returns>
-        private Column[] InitColumns(DataSet dataSet)
+        private Column[] InitColumns(DataField[] dataSet)
         {
             List<Column> columnsLoaded = new List<Column>();
 
-            foreach (var parquetField in dataSet.Schema.Fields)
+            foreach (var parquetField in dataSet)
             {
                 FlattenFields(parquetField, ref columnsLoaded, false);
             }
@@ -283,10 +295,10 @@ namespace Microsoft.ML.Data
             else if (field is MapField mf)
             {
                 var key = mf.Key;
-                cols.Add(new Column(key.Path, ConvertFieldType(DataType.Unspecified), key, DataType.Unspecified));
+                cols.Add(new Column(key.Path, ConvertFieldType(DataType.Unspecified), (DataField)key, DataType.Unspecified));
 
                 var val = mf.Value;
-                cols.Add(new Column(val.Path, ConvertFieldType(DataType.Unspecified), val, DataType.Unspecified));
+                cols.Add(new Column(val.Path, ConvertFieldType(DataType.Unspecified), (DataField)val, DataType.Unspecified));
             }
             else if (field is StructField sf)
             {
@@ -435,10 +447,10 @@ namespace Microsoft.ML.Data
             private readonly ParquetLoader _loader;
             private readonly Stream _fileStream;
             private readonly ParquetConversions _parquetConversions;
+            private readonly ReaderOptions _readerOptions;
             private readonly int[] _actives;
             private readonly int[] _colToActivesIndex;
             private readonly Delegate[] _getters;
-            private readonly ReaderOptions _readerOptions;
             private int _curDataSetRow;
             private IEnumerator<int> _dataSetEnumerator;
             private readonly IEnumerator<int> _blockEnumerator;
@@ -550,8 +562,61 @@ namespace Microsoft.ML.Data
             }
             #endregion
 
+            private class DataSet
+            {
+                private readonly Dictionary<string, IList> _columns;
+                private readonly Schema _schema;
+                private readonly int _rowCount;
+
+                public int RowCount => _rowCount;
+                public IList GetColumn(DataField schemaElement, int offset = 0, int count = -1)
+                {
+                    return GetColumn(schemaElement.Path, offset, count);
+                }
+
+                internal IList GetColumn(string path, int offset, int count)
+                {
+                    if (!_columns.TryGetValue(path, out IList values))
+                    {
+                        return null;
+                    }
+
+                    //optimise for performance by not instantiating another list if you want all the column values
+                    if (offset == 0 && count == -1) return values;
+
+                    IList page = (IList)Activator.CreateInstance(values.GetType());
+                    int max = (count == -1)
+                       ? values.Count
+                       : Math.Min(offset + count, values.Count);
+                    for (int i = offset; i < max; i++)
+                    {
+                        page.Add(values[i]);
+                    }
+                    return page;
+                }
+
+                public long TotalRowCount { get; }
+
+                public DataSet(Schema schema)
+                {
+                    _schema = schema ?? throw new ArgumentNullException(nameof(schema));
+
+                    _columns = new Dictionary<string, IList>();
+                }
+
+                public DataSet(Schema schema, Dictionary<string, IList> pathToValues, long totalRowCount) : this(schema)
+                {
+                    _columns = pathToValues;
+                    _rowCount = _columns.Count == 0 ? 0 : pathToValues.Min(pv => pv.Value.Count);
+                    TotalRowCount = totalRowCount;
+
+                }
+            }
+
             protected override bool MoveNextCore()
             {
+
+
                 if (_dataSetEnumerator.MoveNext())
                 {
                     _curDataSetRow = _dataSetEnumerator.Current;
@@ -565,7 +630,71 @@ namespace Microsoft.ML.Data
                     DataSet ds;
                     lock (_loader._parquetStream)
                     {
-                        ds = ParquetReader.Read(_loader._parquetStream, _loader._parquetOptions, _readerOptions);
+                        var pr = new Parquet.ParquetReader(_loader._parquetStream, _loader._parquetOptions);
+
+                        var pathToValues = new Dictionary<string, IList>();
+                        long pos = 0;
+                        long rowsRead = 0;
+
+                        for (int rg = 0; rg < pr.RowGroupCount; rg++)
+                        {
+                            var rgreader = pr.OpenRowGroupReader(rg);
+                            if ((_readerOptions.Count != -1 && rowsRead >= _readerOptions.Count) ||
+                                        (_readerOptions.Offset > pos + rgreader.RowCount - 1))
+                            {
+                                pos += rgreader.RowCount;
+                                continue;
+                            }
+                            long offset = Math.Max(0, _readerOptions.Offset - pos);
+                            long count = _readerOptions.Count == -1 ? rgreader.RowCount : Math.Min(_readerOptions.Count - rowsRead, rgreader.RowCount);
+
+
+                            DataColumn[] datacolumns = pr.ReadEntireRowGroup(rg);
+
+                            foreach (var datacolumn in datacolumns)
+                            {
+                                string path = datacolumn.Field.Path;
+                                Type type = datacolumn.Data.GetType();
+                                try
+                                {
+                                    IList chunkValues = new List<object>();
+
+                                    for (int i = 0; i < count; i++)
+                                    {
+                                        var v = datacolumn.Data.GetValue(offset + i);
+                                        chunkValues.Add(v);
+                                    }
+
+                                    if (!pathToValues.TryGetValue(path, out IList allValues))
+                                    {
+                                        pathToValues[path] = chunkValues;
+                                    }
+                                    else
+                                    {
+                                        foreach (object v in chunkValues)
+                                        {
+                                            allValues.Add(v);
+                                        }
+                                    }
+
+                                    if (datacolumn == datacolumns[0]) // icol = 0
+                                    {
+                                        //todo: this may not work
+                                        rowsRead += chunkValues.Count;
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    throw new ParquetException($"fatal error reading column '{path}'", ex);
+                                }
+                            }
+
+                            pos += rgreader.RowCount;
+                        }
+                        //Schema schema = pr.Schema;//
+                        //schema = schema.Filter(_fieldPredicates);
+
+                        ds = new DataSet(pr.Schema, pathToValues, pr.ThriftMetadata.Num_rows);
                     }
 
                     var dataSetOrder = CreateOrderSequence(ds.RowCount);
@@ -583,6 +712,7 @@ namespace Microsoft.ML.Data
                 }
                 return false;
             }
+
 
             public override DataViewSchema Schema => _loader.Schema;
 
